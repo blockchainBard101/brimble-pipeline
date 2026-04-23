@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { PipelineService } from '../pipeline/pipeline.service';
+import { QueueService } from '../queue/queue.service';
 import { CreateDeploymentDto } from './dto/create-deployment.dto';
 
 @Injectable()
@@ -8,6 +9,7 @@ export class DeploymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
+    private readonly queue: QueueService,
   ) {}
 
   async create(dto: CreateDeploymentDto) {
@@ -20,10 +22,7 @@ export class DeploymentsService {
       },
     });
 
-    this.pipeline
-      .run(deployment.id, deployment.source, deployment.sourceType)
-      .catch((err) => console.error(`Pipeline error for ${deployment.id}:`, err));
-
+    await this.queue.addDeploymentJob(deployment.id);
     return deployment;
   }
 
@@ -58,7 +57,29 @@ export class DeploymentsService {
   async remove(id: string) {
     const deployment = await this.findOne(id);
     await this.pipeline.stop(deployment.id, deployment.containerId);
-    await this.prisma.log.deleteMany({ where: { deploymentId: id } });
-    return this.prisma.deployment.delete({ where: { id } });
+    return this.prisma.deployment.update({
+      where: { id },
+      data: { status: 'stopped' },
+    });
+  }
+
+  async rollback(id: string, imageTag: string) {
+    const build = await this.prisma.build.findFirst({
+      where: { deploymentId: id, imageTag },
+    });
+    if (!build) {
+      throw new BadRequestException(`No build with tag ${imageTag} exists for deployment ${id}`);
+    }
+    this.pipeline.rollback(id, imageTag).catch((err) =>
+      console.error(`Rollback error for ${id}:`, err),
+    );
+    return { queued: true, imageTag };
+  }
+
+  getBuilds(id: string) {
+    return this.prisma.build.findMany({
+      where: { deploymentId: id },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 }

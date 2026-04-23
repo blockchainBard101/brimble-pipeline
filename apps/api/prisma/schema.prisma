@@ -7,6 +7,7 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// status: pending | building | deploying | health_check | routing | running | failed | stopped
 model Deployment {
   id          String   @id @default(cuid())
   name        String
@@ -17,16 +18,35 @@ model Deployment {
   containerId String?
   url         String?
   port        Int?
+  routeId     String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   logs        Log[]
+  builds      Build[]
 }
 
+// phase: build | deploy | health_check | routing | system
 model Log {
   id           String     @id @default(cuid())
   deploymentId String
   line         String
   stream       String
+  phase        String
   ts           DateTime   @default(now())
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+}
+
+model PortAllocation {
+  id           String   @id @default(cuid())
+  port         Int      @unique
+  deploymentId String   @unique
+  createdAt    DateTime @default(now())
+}
+
+model Build {
+  id           String     @id @default(cuid())
+  deploymentId String
+  imageTag     String
+  createdAt    DateTime   @default(now())
   deployment   Deployment @relation(fields: [deploymentId], references: [id])
 }

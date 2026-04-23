@@ -4,9 +4,14 @@ import { Injectable } from '@nestjs/common';
 export class CaddyService {
   private readonly adminUrl = process.env.CADDY_ADMIN_URL ?? 'http://localhost:2019';
 
-  async addRoute(deploymentId: string, port: number): Promise<void> {
+  routeId(deploymentId: string): string {
+    return `brimble-${deploymentId}`;
+  }
+
+  async addRoute(deploymentId: string, port: number): Promise<string> {
+    const id = this.routeId(deploymentId);
     const route = {
-      '@id': `brimble-${deploymentId}`,
+      '@id': id,
       match: [{ host: [`${deploymentId}.localhost`] }],
       handle: [
         {
@@ -29,11 +34,13 @@ export class CaddyService {
       const text = await res.text();
       throw new Error(`Caddy admin error ${res.status}: ${text}`);
     }
+
+    return id;
   }
 
   async removeRoute(deploymentId: string): Promise<void> {
-    await fetch(`${this.adminUrl}/id/brimble-${deploymentId}`, {
+    await fetch(`${this.adminUrl}/id/${this.routeId(deploymentId)}`, {
       method: 'DELETE',
-    });
+    }).catch(() => {});
   }
 }

@@ -5,7 +5,7 @@ export interface Deployment {
   name: string;
   source: string;
   sourceType: 'git' | 'upload';
-  status: 'pending' | 'building' | 'deploying' | 'running' | 'failed';
+  status: 'pending' | 'building' | 'deploying' | 'health_check' | 'routing' | 'running' | 'failed' | 'stopped';
   imageTag: string | null;
   containerId: string | null;
   url: string | null;
@@ -29,6 +29,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface Build {
+  id: string;
+  deploymentId: string;
+  imageTag: string;
+  createdAt: string;
+}
+
 export const api = {
   deployments: {
     list: () => request<Deployment[]>('/deployments'),
@@ -39,6 +46,12 @@ export const api = {
         body: JSON.stringify(payload),
       }),
     delete: (id: string) => request<void>(`/deployments/${id}`, { method: 'DELETE' }),
+    rollback: (id: string, imageTag: string) =>
+      request<{ queued: boolean; imageTag: string }>(`/deployments/${id}/rollback`, {
+        method: 'POST',
+        body: JSON.stringify({ imageTag }),
+      }),
+    getBuilds: (id: string) => request<Build[]>(`/deployments/${id}/builds`),
   },
   logs: {
     streamUrl: (id: string) => `${BASE_URL}/deployments/${id}/logs`,

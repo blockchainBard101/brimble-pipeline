@@ -13,6 +13,7 @@ services:
     depends_on:
       - caddy
       - db
+      - redis
 
   web:
     build: ./apps/web
@@ -39,6 +40,11 @@ services:
       POSTGRES_DB: brimble
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
 
 volumes:
   pgdata:

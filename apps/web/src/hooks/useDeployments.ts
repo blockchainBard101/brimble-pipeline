@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api, type Deployment } from '../lib/api';
 
-const TERMINAL = new Set<Deployment['status']>(['running', 'failed']);
+const TERMINAL = new Set<Deployment['status']>(['running', 'failed', 'stopped']);
 
 export function useDeployments() {
   return useQuery<Deployment[]>({

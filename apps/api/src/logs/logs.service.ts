@@ -2,8 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { Subject, Observable } from 'rxjs';
 import { PrismaService } from '../database/prisma.service';
 
+export interface LogLine {
+  line: string;
+  stream: 'stdout' | 'stderr';
+  phase: string;
+}
+
 interface LogEntry {
-  subject: Subject<string>;
+  subject: Subject<LogLine>;
   closed: boolean;
 }
 
@@ -16,21 +22,22 @@ export class LogsService {
   private ensure(deploymentId: string): LogEntry {
     if (!this.streams.has(deploymentId)) {
       this.streams.set(deploymentId, {
-        subject: new Subject<string>(),
+        subject: new Subject<LogLine>(),
         closed: false,
       });
     }
     return this.streams.get(deploymentId)!;
   }
 
-  async emit(
+  async append(
     deploymentId: string,
     line: string,
-    stream: 'stdout' | 'stderr' = 'stdout',
+    stream: 'stdout' | 'stderr',
+    phase: string,
   ): Promise<void> {
-    await this.prisma.log.create({ data: { deploymentId, line, stream } });
+    await this.prisma.log.create({ data: { deploymentId, line, stream, phase } });
     const entry = this.ensure(deploymentId);
-    if (!entry.closed) entry.subject.next(line);
+    if (!entry.closed) entry.subject.next({ line, stream, phase });
   }
 
   close(deploymentId: string): void {
@@ -42,15 +49,17 @@ export class LogsService {
   }
 
   // Replays persisted logs first, then tails the live Subject.
-  getStream(deploymentId: string): Observable<string> {
-    return new Observable<string>((subscriber) => {
+  getStream(deploymentId: string): Observable<LogLine> {
+    return new Observable<LogLine>((subscriber) => {
       let liveSub: { unsubscribe(): void } | null = null;
 
       this.prisma.log
         .findMany({ where: { deploymentId }, orderBy: { ts: 'asc' } })
         .then((logs) => {
           if (subscriber.closed) return;
-          logs.forEach((l) => subscriber.next(l.line));
+          logs.forEach((l) =>
+            subscriber.next({ line: l.line, stream: l.stream as 'stdout' | 'stderr', phase: l.phase }),
+          );
 
           const entry = this.ensure(deploymentId);
           if (entry.closed) {
@@ -59,7 +68,7 @@ export class LogsService {
           }
 
           liveSub = entry.subject.subscribe({
-            next: (line) => subscriber.next(line),
+            next: (logLine) => subscriber.next(logLine),
             error: (err) => subscriber.error(err),
             complete: () => subscriber.complete(),
           });

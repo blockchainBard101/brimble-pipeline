@@ -14,6 +14,10 @@ import { DeploymentsService } from './deployments.service';
 import { LogsService } from '../logs/logs.service';
 import { CreateDeploymentDto } from './dto/create-deployment.dto';
 
+class RollbackDto {
+  imageTag: string;
+}
+
 @Controller('deployments')
 export class DeploymentsController {
   constructor(
@@ -36,10 +40,20 @@ export class DeploymentsController {
     return this.deploymentsService.findOne(id);
   }
 
+  @Get(':id/builds')
+  getBuilds(@Param('id') id: string) {
+    return this.deploymentsService.getBuilds(id);
+  }
+
+  @Post(':id/rollback')
+  rollback(@Param('id') id: string, @Body() dto: RollbackDto) {
+    return this.deploymentsService.rollback(id, dto.imageTag);
+  }
+
   @Sse(':id/logs')
   streamLogs(@Param('id') id: string): Observable<MessageEvent> {
     return this.logsService.getStream(id).pipe(
-      map((line) => ({ data: line }) as MessageEvent),
+      map((entry) => ({ data: JSON.stringify(entry) }) as MessageEvent),
     );
   }
 
