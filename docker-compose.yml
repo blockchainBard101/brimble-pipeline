@@ -1,0 +1,44 @@
+services:
+  api:
+    build: ./apps/api
+    ports:
+      - "3001:3001"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./uploads:/app/uploads"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/brimble
+      - CADDY_ADMIN_URL=http://caddy:2019
+      - DOCKER_HOST_IP=host-gateway
+    depends_on:
+      - caddy
+      - db
+
+  web:
+    build: ./apps/web
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_URL=http://localhost:3001
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "2019:2019"
+    volumes:
+      - "./infra/caddy/Caddyfile:/etc/caddy/Caddyfile"
+
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: brimble
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

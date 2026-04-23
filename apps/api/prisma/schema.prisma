@@ -1,0 +1,32 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Deployment {
+  id          String   @id @default(cuid())
+  name        String
+  source      String
+  sourceType  String
+  status      String
+  imageTag    String?
+  containerId String?
+  url         String?
+  port        Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  logs        Log[]
+}
+
+model Log {
+  id           String     @id @default(cuid())
+  deploymentId String
+  line         String
+  stream       String
+  ts           DateTime   @default(now())
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+}
