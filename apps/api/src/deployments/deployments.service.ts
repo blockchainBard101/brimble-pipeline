@@ -3,6 +3,7 @@ import { PrismaService } from '../database/prisma.service';
 import { PipelineService } from '../pipeline/pipeline.service';
 import { QueueService } from '../queue/queue.service';
 import { EventsService } from '../events/events.service';
+import { EnvVarsService } from './env-vars.service';
 import { CreateDeploymentDto } from './dto/create-deployment.dto';
 
 @Injectable()
@@ -12,6 +13,7 @@ export class DeploymentsService {
     private readonly pipeline: PipelineService,
     private readonly queue: QueueService,
     private readonly events: EventsService,
+    private readonly envVars: EnvVarsService,
   ) {}
 
   async create(dto: CreateDeploymentDto) {
@@ -30,6 +32,10 @@ export class DeploymentsService {
       where: { id: deployment.id },
       data: { slug },
     });
+
+    if (dto.envVars?.length) {
+      await this.envVars.setEnvVars(deployment.id, dto.envVars);
+    }
 
     await this.queue.addDeploymentJob(deployment.id);
     return updated;
@@ -72,10 +78,7 @@ export class DeploymentsService {
   async remove(id: string) {
     const deployment = await this.findOne(id);
     await this.pipeline.stop(deployment.id, deployment.containerId);
-    return this.prisma.deployment.update({
-      where: { id },
-      data: { status: 'stopped' },
-    });
+    await this.prisma.deployment.delete({ where: { id } });
   }
 
   async rollback(id: string, imageTag: string) {

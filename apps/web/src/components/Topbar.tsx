@@ -17,7 +17,7 @@ export function Topbar({ stats, onNew }: Props) {
     <header className="h-11 flex items-center justify-between px-4 border-b border-zinc-800 bg-zinc-950 shrink-0">
       <div className="flex items-center gap-2">
         <span className="w-5 h-5 rounded-sm bg-emerald-500 shrink-0" />
-        <span className="font-mono font-semibold text-sm text-zinc-100">brimble</span>
+        <span className="font-mono font-semibold text-sm text-zinc-100">mini-PaaS</span>
       </div>
 
       <div className="flex items-center gap-2">

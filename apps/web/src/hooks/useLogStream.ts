@@ -7,35 +7,53 @@ export interface LogLine {
   phase: string;
 }
 
-export function useLogStream(deploymentId: string | null): LogLine[] {
+const TERMINAL = new Set(['running', 'failed', 'stopped']);
+
+export function useLogStream(deploymentId: string | null, status?: string): LogLine[] {
   const [lines, setLines] = useState<LogLine[]>([]);
-  const esRef = useRef<EventSource | null>(null);
+  const statusRef = useRef(status);
+  statusRef.current = status;
 
   useEffect(() => {
     if (!deploymentId) return;
 
     setLines([]);
 
-    const es = new EventSource(api.logs.streamUrl(deploymentId));
-    esRef.current = es;
+    let destroyed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let es: EventSource | null = null;
 
-    es.onmessage = (e: MessageEvent<string>) => {
-      try {
-        const entry = JSON.parse(e.data) as LogLine;
-        setLines((prev) => [...prev, entry]);
-      } catch {
-        setLines((prev) => [...prev, { line: e.data, stream: 'stdout', phase: 'system' }]);
-      }
-    };
+    function connect() {
+      if (destroyed) return;
 
-    es.onerror = () => {
-      es.close();
-      esRef.current = null;
-    };
+      es = new EventSource(api.logs.streamUrl(deploymentId!));
+
+      es.onmessage = (e: MessageEvent<string>) => {
+        try {
+          setLines((prev) => [...prev, JSON.parse(e.data) as LogLine]);
+        } catch {
+          setLines((prev) => [...prev, { line: e.data, stream: 'stdout', phase: 'system' }]);
+        }
+      };
+
+      es.onerror = () => {
+        es?.close();
+        es = null;
+        if (destroyed) return;
+        if (TERMINAL.has(statusRef.current ?? '')) return;
+        // Pipeline still in progress — stream closed because clear() was called on redeploy/rollback.
+        // Clear stale lines and reconnect to pick up the new run.
+        setLines([]);
+        retryTimer = setTimeout(connect, 1000);
+      };
+    }
+
+    connect();
 
     return () => {
-      es.close();
-      esRef.current = null;
+      destroyed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      es?.close();
     };
   }, [deploymentId]);
 

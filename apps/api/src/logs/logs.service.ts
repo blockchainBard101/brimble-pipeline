@@ -40,6 +40,15 @@ export class LogsService {
     if (!entry.closed) entry.subject.next({ line, stream, phase });
   }
 
+  async clear(deploymentId: string): Promise<void> {
+    await this.prisma.log.deleteMany({ where: { deploymentId } });
+    const entry = this.streams.get(deploymentId);
+    if (entry) {
+      if (!entry.closed) entry.subject.complete();
+      this.streams.delete(deploymentId);
+    }
+  }
+
   close(deploymentId: string): void {
     const entry = this.streams.get(deploymentId);
     if (entry && !entry.closed) {

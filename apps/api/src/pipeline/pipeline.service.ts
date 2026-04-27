@@ -66,6 +66,7 @@ export class PipelineService implements OnModuleInit {
       this.logsService.append(deploymentId, line, stream, phase);
 
     try {
+      await this.logsService.clear(deploymentId);
       await this.setStatus(deploymentId, 'building');
       await this.events.createEvent(deploymentId, 'status_change', 'Status changed to building');
 
@@ -277,15 +278,9 @@ export class PipelineService implements OnModuleInit {
       buildDir = tmpDir;
     }
 
-    // Railpack caches by cache-key internally; detect a hit by checking if the cache dir exists.
-    const cacheDir = path.join(process.env.RAILPACK_CACHE_DIR ?? '/cache', deploymentId);
-    let cacheHit = false;
-    try {
-      await fs.access(cacheDir);
-      cacheHit = true;
-    } catch {
-      // cold build
-    }
+    // If a previous build exists, BuildKit has the layers cached for this deployment.
+    const previousBuild = await this.prisma.build.findFirst({ where: { deploymentId } });
+    const cacheHit = !!previousBuild;
 
     const start = Date.now();
     try {

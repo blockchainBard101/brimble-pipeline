@@ -279,7 +279,7 @@ export function DeploymentCard({ deployment }: { deployment: Deployment }) {
       )}
 
       {/* Logs */}
-      {showLogs && <LogStream deploymentId={deployment.id} />}
+      {showLogs && <LogStream deploymentId={deployment.id} status={deployment.status} />}
 
       {/* Activity */}
       {showActivity && (

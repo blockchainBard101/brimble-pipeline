@@ -29,8 +29,8 @@ function phaseColor(phase: string): string {
   }
 }
 
-export function LogStream({ deploymentId }: { deploymentId: string }) {
-  const lines = useLogStream(deploymentId);
+export function LogStream({ deploymentId, status }: { deploymentId: string; status: string }) {
+  const lines = useLogStream(deploymentId, status);
   const [phase, setPhase] = useState<Phase>('all');
   const bottomRef = useRef<HTMLDivElement>(null);
 

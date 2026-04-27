@@ -278,3 +278,16 @@ the `X-Hub-Signature-256` header before any processing. Invalid signatures retur
   unless backed by Redis pub/sub (see above).
 - **No auth** — all endpoints are public. Production needs at minimum a bearer token on
   the API and Caddy admin interface bound to a private network only.
+
+
+## Time Spent
+
+| Phase | What | Hours |
+|---|---|---|
+| Phase 1 | Core scaffold, pipeline, Railpack + Docker + Caddy integration, SSE log streaming | 8h |
+| Phase 2 | BullMQ queue, port allocator, health checks, graceful shutdown, resource limits, rollback | 6h |
+| Phase 3 | Build cache, container metrics, subdomain routing, GitHub webhooks, activity feed, env vars encryption | 8h |
+| Frontend | shadcn/ui redesign, Railway-inspired dark theme, all components | 4h |
+| README + diagrams | Architecture diagrams, decision writeups, production delta | 2h |
+| Brimble deploy + feedback | Deploying frontend, writing honest feedback | 1h |
+| **Total** | | **~29h** |

@@ -36,6 +36,7 @@ export interface CreateDeploymentPayload {
   name: string;
   source: string;
   sourceType: 'git' | 'upload';
+  envVars?: { key: string; value: string }[];
 }
 
 export interface Build {

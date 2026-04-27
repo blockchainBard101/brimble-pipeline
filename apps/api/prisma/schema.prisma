@@ -36,7 +36,7 @@ model Log {
   stream       String
   phase        String
   ts           DateTime   @default(now())
-  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
 }
 
 model PortAllocation {
@@ -53,7 +53,7 @@ model Build {
   durationMs   Int?
   cacheHit     Boolean    @default(false)
   createdAt    DateTime   @default(now())
-  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
 }
 
 model DeploymentEvent {
@@ -63,7 +63,7 @@ model DeploymentEvent {
   message      String
   metadata     Json?
   ts           DateTime   @default(now())
-  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
 }
 
 model EnvVar {
@@ -74,5 +74,5 @@ model EnvVar {
   iv             String
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
-  deployment     Deployment @relation(fields: [deploymentId], references: [id])
+  deployment     Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
 }
