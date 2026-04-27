@@ -134,3 +134,80 @@ docker-compose exec api npx prisma migrate dev
   a fresh Caddy with only the static Caddyfile may need an initial `POST /config/apps/http`.
 - **No auth** — all endpoints are public. Production needs at minimum a bearer token on
   the API and Caddy admin interface bound to a private network only.
+
+---
+
+## Build Cache
+
+Railpack supports BuildKit-compatible local caching. Each deployment's cache is keyed by its URL slug (`<name>-<shortId>`) and stored in a named Docker volume (`railpack_cache`) mounted at `/cache` inside the API container.
+
+- **First build (cold):** downloads base layers, installs dependencies — typically 1–3 min depending on language.
+- **Subsequent builds (cached):** layer resolution skips already-built stages — typically 10–40s.
+- Cache flags passed: `--cache-from type=local,src=/cache/<key> --cache-to type=local,dest=/cache/<key>,mode=max`
+- `cacheHit` is determined by whether `/cache/<key>` exists **before** the build starts.
+- Build duration is stored on the `Build` model as `durationMs` and shown in the UI with colour-coded timing.
+
+---
+
+## Container Metrics
+
+After a deployment reaches `running` status, MetricsService opens a persistent Docker stats stream (`container.stats({ stream: true })`) and fans metrics out to any connected SSE clients.
+
+**CPU formula (exact Docker formula):**
+```
+cpuDelta    = cpu_stats.cpu_usage.total_usage - precpu_stats.cpu_usage.total_usage
+systemDelta = cpu_stats.system_cpu_usage    - precpu_stats.system_cpu_usage
+cpuPercent  = (cpuDelta / systemDelta) * numCpus * 100
+```
+This is non-trivial because Docker reports **cumulative** nanosecond counters; the delta between two consecutive stat frames gives the per-interval usage.
+
+**SSE fan-out:** one `Subject<ContainerMetrics>` per deployment (same pattern as logs). Multiple browser tabs subscribe independently; the Docker stats stream is opened once and shared. `stopMetrics()` is called on container stop or redeploy.
+
+**Endpoint:** `GET /deployments/:id/metrics` — raw SSE (not NestJS `@Sse`), returns 404 if deployment not `running`.
+
+---
+
+## Subdomain Routing
+
+Each deployment gets a URL of the form `http://<name>-<shortId>.localhost` where `shortId = deploymentId.slice(0, 8)`.
+
+**How `*.localhost` resolves:**
+- Chrome and Firefox resolve `*.localhost` to `127.0.0.1` natively without `/etc/hosts` changes (per RFC 6761).
+- Safari does not — add manually: `echo "127.0.0.1 <slug>.localhost" | sudo tee -a /etc/hosts`
+
+**How Caddy routing works:**
+- Caddy Admin API `PUT /id/{routeId}` updates existing routes in-place (redeployments).
+- For new routes: `GET /config/apps/http/servers/<key>/routes` then `POST` (append to array) to register a `host` matcher.
+- Routes are prepended (index 0) so they match before the catch-all `:80` route.
+
+---
+
+## GitHub Webhooks
+
+Wire up auto-deploy on push in three steps:
+
+1. Set `GITHUB_WEBHOOK_SECRET=<random>` in your API env.
+2. In your GitHub repo: Settings → Webhooks → Add webhook.
+   - Payload URL: `http://<your-server>:3001/webhooks/github`
+   - Content type: `application/json`
+   - Secret: same value as `GITHUB_WEBHOOK_SECRET`
+   - Events: **Just the push event**
+3. Push to the default branch — the API receives the webhook, finds any existing deployment for that repo URL, and triggers a redeploy. If none exists, it creates a new deployment automatically.
+
+**HMAC verification:** every incoming webhook is verified with `crypto.timingSafeEqual` against the `X-Hub-Signature-256` header before any processing. Invalid signatures return 401.
+
+---
+
+## Production Delta
+
+What would change moving this implementation to Brimble's actual production stack:
+
+| This implementation | Production equivalent |
+|---|---|
+| `dockerode` + Docker socket | Nomad job submission via Nomad HTTP API |
+| Caddy Admin API (dynamic routes) | Consul service registration + Consul-Template regenerating Caddy config |
+| BullMQ + Redis | Nomad's built-in job scheduler |
+| DB `PortAllocation` table | Nomad dynamic port allocation in job spec |
+| `/var/run/docker.sock` | Nomad client API endpoint |
+| `.env` secrets | Vault dynamic secrets injected at job runtime |
+| Single-node Caddy | Multi-region Caddy fleet behind anycast |

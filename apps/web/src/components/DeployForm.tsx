@@ -1,88 +1,121 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useCreateDeployment } from '../hooks/useCreateDeployment';
-
-type SourceMode = 'git' | 'upload';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
+import { GitBranch, Upload } from 'lucide-react';
 
 export function DeployForm() {
-  const [mode, setMode] = useState<SourceMode>('git');
+  const [mode, setMode] = useState<'git' | 'upload'>('git');
   const [name, setName] = useState('');
   const [gitUrl, setGitUrl] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const { mutate, isPending } = useCreateDeployment();
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name) return;
-
     if (mode === 'git' && gitUrl) {
       mutate({ name, source: gitUrl, sourceType: 'git' });
+      setName('');
+      setGitUrl('');
     } else if (mode === 'upload' && file) {
       mutate({ name, source: file.name, sourceType: 'upload' });
+      setName('');
+      setFile(null);
     }
-
-    setName('');
-    setGitUrl('');
-    setFile(null);
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-4"
-    >
-      <h2 className="text-lg font-semibold">New Deployment</h2>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <p className="text-[11px] font-mono font-semibold text-zinc-500 uppercase tracking-wider">
+        Deploy
+      </p>
 
-      <div className="flex gap-2">
-        {(['git', 'upload'] as SourceMode[]).map((m) => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => setMode(m)}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              mode === m
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-            }`}
-          >
-            {m === 'git' ? 'Git URL' : 'Upload'}
-          </button>
-        ))}
+      <div className="space-y-1.5">
+        <Label htmlFor="deploy-name" className="text-xs text-zinc-500">
+          Name
+        </Label>
+        <Input
+          id="deploy-name"
+          placeholder="my-app"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          className="h-8 text-sm bg-zinc-900 border-zinc-700 placeholder:text-zinc-600 focus-visible:border-zinc-500"
+        />
       </div>
 
-      <input
-        type="text"
-        placeholder="Deployment name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        required
-        className="w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-2 text-sm placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
+      <Tabs value={mode} onValueChange={(v) => setMode(v as 'git' | 'upload')}>
+        <TabsList className="w-full bg-zinc-900 border border-zinc-800 h-8 p-0.5">
+          <TabsTrigger value="git" className="flex-1 text-xs gap-1.5">
+            <GitBranch className="size-3" />
+            Git URL
+          </TabsTrigger>
+          <TabsTrigger value="upload" className="flex-1 text-xs gap-1.5">
+            <Upload className="size-3" />
+            Upload
+          </TabsTrigger>
+        </TabsList>
 
-      {mode === 'git' ? (
-        <input
-          type="url"
-          placeholder="https://github.com/org/repo"
-          value={gitUrl}
-          onChange={(e) => setGitUrl(e.target.value)}
-          required
-          className="w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-2 text-sm placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      ) : (
-        <input
-          type="file"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          required
-          className="w-full text-sm text-gray-400 file:mr-4 file:rounded-md file:border-0 file:bg-gray-700 file:px-3 file:py-1.5 file:text-sm file:text-gray-100 cursor-pointer"
-        />
-      )}
+        <TabsContent value="git" className="mt-2">
+          <Input
+            type="url"
+            placeholder="https://github.com/org/repo"
+            value={gitUrl}
+            onChange={(e) => setGitUrl(e.target.value)}
+            className="h-8 text-xs bg-zinc-900 border-zinc-700 placeholder:text-zinc-600 font-mono focus-visible:border-zinc-500"
+          />
+        </TabsContent>
 
-      <button
+        <TabsContent value="upload" className="mt-2">
+          <div
+            className={`flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed h-24 cursor-pointer transition-colors ${
+              dragging
+                ? 'border-emerald-500 bg-emerald-500/5'
+                : 'border-zinc-700 hover:border-zinc-600'
+            }`}
+            onClick={() => fileRef.current?.click()}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              const dropped = e.dataTransfer.files[0];
+              if (dropped) setFile(dropped);
+            }}
+          >
+            <Upload className="size-4 text-zinc-500" />
+            <p className="text-xs text-zinc-500">
+              {file ? (
+                <span className="text-zinc-300 font-mono">{file.name}</span>
+              ) : (
+                'Drop or click to upload'
+              )}
+            </p>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+        </TabsContent>
+      </Tabs>
+
+      <Button
         type="submit"
         disabled={isPending}
-        className="rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors"
+        className="w-full h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white border-0"
       >
-        {isPending ? 'Deploying…' : 'Deploy'}
-      </button>
+        {isPending ? 'Queuing…' : 'Deploy'}
+      </Button>
     </form>
   );
 }

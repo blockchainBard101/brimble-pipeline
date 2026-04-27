@@ -1,0 +1,13 @@
+# Never send local node_modules or build artifacts into Docker —
+# they are platform-specific and would break Linux containers built on macOS/Windows.
+node_modules
+apps/api/node_modules
+apps/web/node_modules
+apps/api/dist
+apps/web/dist
+
+# Runtime noise
+.git
+*.log
+uploads
+.env

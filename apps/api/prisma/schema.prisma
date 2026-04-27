@@ -11,6 +11,7 @@ generator client {
 model Deployment {
   id          String   @id @default(cuid())
   name        String
+  slug        String?  @unique
   source      String
   sourceType  String
   status      String
@@ -23,6 +24,8 @@ model Deployment {
   updatedAt   DateTime @updatedAt
   logs        Log[]
   builds      Build[]
+  events      DeploymentEvent[]
+  envVars     EnvVar[]
 }
 
 // phase: build | deploy | health_check | routing | system
@@ -47,6 +50,29 @@ model Build {
   id           String     @id @default(cuid())
   deploymentId String
   imageTag     String
+  durationMs   Int?
+  cacheHit     Boolean    @default(false)
   createdAt    DateTime   @default(now())
   deployment   Deployment @relation(fields: [deploymentId], references: [id])
+}
+
+model DeploymentEvent {
+  id           String     @id @default(cuid())
+  deploymentId String
+  type         String
+  message      String
+  metadata     Json?
+  ts           DateTime   @default(now())
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+}
+
+model EnvVar {
+  id             String     @id @default(cuid())
+  deploymentId   String
+  key            String
+  encryptedValue String
+  iv             String
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  deployment     Deployment @relation(fields: [deploymentId], references: [id])
 }

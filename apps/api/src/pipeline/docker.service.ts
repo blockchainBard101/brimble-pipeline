@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import Dockerode from 'dockerode';
+import * as Dockerode from 'dockerode';
 import { PortsService } from '../ports/ports.service';
 import { LogsService } from '../logs/logs.service';
+import { EnvVarsService } from '../deployments/env-vars.service';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -9,11 +10,14 @@ function sleep(ms: number): Promise<void> {
 
 @Injectable()
 export class DockerService {
-  private readonly docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
+  private readonly docker = new Dockerode({
+    socketPath: process.env.DOCKER_SOCKET ?? '/var/run/docker.sock',
+  });
 
   constructor(
     private readonly ports: PortsService,
     private readonly logsService: LogsService,
+    private readonly envVarsService: EnvVarsService,
   ) {}
 
   // portKey is used for PortAllocation (normally = deploymentId; for rollback = deploymentId_rb).
@@ -25,6 +29,17 @@ export class DockerService {
   ): Promise<{ containerId: string; port: number }> {
     const port = await this.ports.acquirePort(portKey);
 
+    const decryptedVars = await this.envVarsService.getDecrypted(logId);
+    const envKeys = Object.keys(decryptedVars);
+    if (envKeys.length) {
+      await this.logsService.append(
+        logId,
+        `[docker] Injecting env vars: ${envKeys.join(', ')}`,
+        'stdout',
+        'deploy',
+      );
+    }
+
     await this.logsService.append(
       logId,
       `[docker] Starting container from ${imageTag} on host port ${port}`,
@@ -32,16 +47,19 @@ export class DockerService {
       'deploy',
     );
 
+    const envArray = [
+      `PORT=${port}`,
+      ...Object.entries(decryptedVars).map(([k, v]) => `${k}=${v}`),
+    ];
+
     const container = await this.docker.createContainer({
       Image: imageTag,
       name: `brimble-${portKey}`,
-      Env: [`PORT=${port}`],
+      Env: envArray,
       ExposedPorts: { [`${port}/tcp`]: {} },
       HostConfig: {
         Memory: 512 * 1024 * 1024,
         MemorySwap: 512 * 1024 * 1024,
-        CpuQuota: 50_000,
-        CpuPeriod: 100_000,
         NanoCpus: 500_000_000,
         PortBindings: { [`${port}/tcp`]: [{ HostPort: String(port) }] },
         RestartPolicy: { Name: 'no' },

@@ -6,6 +6,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+export interface HealthResult {
+  healthy: boolean;
+  attempts: number;
+}
+
 @Injectable()
 export class HealthService {
   constructor(private readonly logsService: LogsService) {}
@@ -15,7 +20,7 @@ export class HealthService {
     host: string,
     port: number,
     opts?: { retries?: number; intervalMs?: number },
-  ): Promise<boolean> {
+  ): Promise<HealthResult> {
     const retries = opts?.retries ?? 10;
     const intervalMs = opts?.intervalMs ?? 2000;
 
@@ -36,7 +41,7 @@ export class HealthService {
           'stdout',
           'health_check',
         );
-        return true;
+        return { healthy: true, attempts: attempt };
       }
 
       if (attempt < retries) await sleep(intervalMs);
@@ -48,7 +53,7 @@ export class HealthService {
       'stderr',
       'health_check',
     );
-    return false;
+    return { healthy: false, attempts: retries };
   }
 
   private probe(host: string, port: number): Promise<boolean> {
