@@ -4,6 +4,10 @@ A mini-PaaS deployment pipeline. Users submit a Git URL or upload a project.
 The system builds it into a Docker image using Railpack, runs it as a container,
 and Caddy reverse-proxies a subdomain URL to it. Logs stream live to the UI over SSE.
 
+## Demo
+
+[![mini-PaaS demo](https://img.youtube.com/vi/O7J07BKyfus/maxresdefault.jpg)](https://youtu.be/O7J07BKyfus)
+
 ## Architecture
 
 ```mermaid
@@ -161,13 +165,15 @@ so a crash doesn't silently spin up a new container that bypasses health checks.
 ## Running locally
 
 ```bash
-cp .env.example .env
+git clone https://github.com/blockchainBard101/brimble-pipeline
+cd brimble-pipeline
 docker compose up --build
 # Dashboard:    http://localhost:7400
 # API:          http://localhost:7401
 # Deployed apps http://<slug>.localhost:7402
-# Caddy admin:  http://localhost:2019  (internal — exec into caddy container)
 ```
+
+No `.env` file needed — all defaults are baked into `docker-compose.yml`.
 
 To apply DB migrations inside the running stack:
 
