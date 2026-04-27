@@ -289,5 +289,51 @@ the `X-Hub-Signature-256` header before any processing. Invalid signatures retur
 | Phase 3 | Build cache, container metrics, subdomain routing, GitHub webhooks, activity feed, env vars encryption | 8h |
 | Frontend | shadcn/ui redesign, Railway-inspired dark theme, all components | 4h |
 | README + diagrams | Architecture diagrams, decision writeups, production delta | 2h |
-| Brimble deploy + feedback | Deploying frontend, writing honest feedback | 1h |
 | **Total** | | **~29h** |
+
+## Brimble Deploy + Feedback
+
+**Deployed app:** https://react-null.brimble.app/
+
+Deployed a React app on Brimble as part of this take-home submission.
+Here's the honest version:
+
+The good: onboarding flow is clean and the UI is genuinely well designed.
+Connecting a GitHub repo, selecting a branch, and triggering a deploy took
+under 2 minutes. Build logs appeared inline during the build which was great, exactly the experience I was trying to replicate in my own submission.
+
+The friction:
+
+First I tried deploying my Next.js portfolio. Got a prompt to upgrade my plan
+to deploy "web services"  but a Next.js app is a frontend framework, not a
+web service. The distinction isn't clear from the UI and the error messaging
+doesn't explain what specifically about Next.js requires an upgrade. I expected
+Brimble to handle Next.js out of the box given it's the most popular React
+framework. That was a jarring first experience.
+
+Second attempt was a plain JavaScript frontend, same result. Failed build,
+same upgrade prompt. At this point I wasn't sure if the issue was the framework,
+the plan tier, or something in my project config. No actionable error message
+to tell me which.
+
+Third attempt — a plain React app (Vite). This worked cleanly. Railpack detected
+the framework automatically, build succeeded, URL was live in under 2 minutes.
+
+What I'd change:
+
+- The plan gate needs better messaging. "Upgrade to deploy web services" means
+  nothing to a developer. Say specifically: "Next.js SSR requires a paid plan
+  because it needs a Node.js runtime — static React apps deploy free."
+
+- Failed builds should show exactly why they failed, not just a generic error.
+  I had to guess whether it was a framework issue, a config issue, or a plan
+  issue. That ambiguity kills trust fast.
+
+- The free tier should be clearer upfront about what frameworks are supported.
+  A compatibility matrix on the pricing page would eliminate the trial-and-error
+  entirely.
+
+One thing that stood out positively: Railpack detecting the Vite + React stack
+automatically with zero config is genuinely impressive  and interesting to see
+in the wild given I'm using Railpack internally in my own submission to do the
+same thing.
