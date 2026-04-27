@@ -215,27 +215,61 @@ export function DeploymentCard({ deployment }: { deployment: Deployment }) {
 
       {/* Rollback panel */}
       {showRollback && (
-        <div className="flex items-center gap-2 pt-1">
-          <select
-            value={selectedTag}
-            onChange={(e) => setSelectedTag(e.target.value)}
-            className="flex-1 rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:ring-1 focus:ring-zinc-500"
-          >
-            <option value="">— select build —</option>
-            {(builds ?? []).map((b) => (
-              <option key={b.id} value={b.imageTag}>
-                {b.imageTag} · {new Date(b.createdAt).toLocaleString()}
-              </option>
-            ))}
-          </select>
-          <Button
-            disabled={!selectedTag || rollback.isPending}
-            onClick={() => selectedTag && rollback.mutate(selectedTag)}
-            size="sm"
-            className="h-7 bg-amber-600 hover:bg-amber-500 text-white text-xs border-0 shrink-0"
-          >
-            {rollback.isPending ? 'Rolling back…' : 'Roll back'}
-          </Button>
+        <div className="rounded-md border border-zinc-800 bg-zinc-900/40 p-2.5 space-y-2">
+          <p className="text-[11px] text-zinc-500 font-mono">Select a build to roll back to:</p>
+          {!builds || builds.length === 0 ? (
+            <p className="text-[11px] text-zinc-600 font-mono">No builds found.</p>
+          ) : (
+            <div className="space-y-1">
+              {builds.map((b, i) => {
+                const isActive = b.imageTag === deployment.imageTag;
+                const isSelected = selectedTag === b.imageTag;
+                return (
+                  <button
+                    key={b.id}
+                    onClick={() => setSelectedTag(isSelected ? '' : b.imageTag)}
+                    className={`w-full text-left rounded px-2 py-1.5 text-[11px] font-mono flex items-center justify-between gap-2 transition-colors ${
+                      isSelected
+                        ? 'bg-amber-500/15 border border-amber-500/40 text-amber-300'
+                        : 'bg-zinc-800/60 border border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                    }`}
+                  >
+                    <span className="truncate">
+                      <span className="text-zinc-500">#{builds.length - i} </span>
+                      {new Date(b.createdAt).toLocaleString()}
+                      {b.durationMs != null && (
+                        <span className={`ml-2 ${durationColor(b.durationMs)}`}>
+                          {fmtDuration(b.durationMs)}
+                        </span>
+                      )}
+                      {b.cacheHit && <span className="ml-1 text-amber-400">⚡</span>}
+                    </span>
+                    {isActive && (
+                      <span className="shrink-0 text-[10px] text-emerald-400 bg-emerald-500/10 rounded px-1">
+                        current
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2 pt-0.5">
+            <button
+              onClick={() => { setShowRollback(false); setSelectedTag(''); }}
+              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              Cancel
+            </button>
+            <Button
+              disabled={!selectedTag || rollback.isPending || selectedTag === deployment.imageTag}
+              onClick={() => selectedTag && rollback.mutate(selectedTag)}
+              size="sm"
+              className="h-7 bg-amber-600 hover:bg-amber-500 text-white text-xs border-0 shrink-0 disabled:opacity-40"
+            >
+              {rollback.isPending ? 'Rolling back…' : 'Roll back'}
+            </Button>
+          </div>
         </div>
       )}
 

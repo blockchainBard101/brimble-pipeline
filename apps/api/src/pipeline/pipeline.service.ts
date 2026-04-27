@@ -69,7 +69,7 @@ export class PipelineService implements OnModuleInit {
       await this.setStatus(deploymentId, 'building');
       await this.events.createEvent(deploymentId, 'status_change', 'Status changed to building');
 
-      const imageTag = `brimble/${deploymentId}:latest`;
+      const imageTag = `brimble/${deploymentId}:${Date.now()}`;
       await log(`[pipeline] Building image ${imageTag}`, 'stdout', 'system');
       await log(`[pipeline] Checking build cache for ${name}...`, 'stdout', 'build');
 

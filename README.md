@@ -1,57 +1,135 @@
 # brimble-pipeline
 
-A mini-PaaS deployment pipeline: submit a Git URL, get a live URL back. Logs stream in real-time.
+A mini-PaaS deployment pipeline. Users submit a Git URL or upload a project.
+The system builds it into a Docker image using Railpack, runs it as a container,
+and Caddy reverse-proxies a subdomain URL to it. Logs stream live to the UI over SSE.
 
 ## Architecture
 
-```
-Browser
-  │
-  ├── GET /deployments (TanStack Query, polls 3s while non-terminal)
-  ├── POST /deployments (mutation → optimistic refetch)
-  └── GET /deployments/:id/logs (EventSource / SSE)
+```mermaid
+graph TD
+    Browser["Browser\n(React + TanStack Query)"]
 
-NestJS API (:3001)
-  │
-  ├── DeploymentsController
-  │     └── POST /deployments ──► QueueService.addDeploymentJob()
-  │                                        │
-  │                               BullMQ "deployments" queue
-  │                                        │
-  │                               DeploymentProcessor.process()
-  │                                        │
-  │                               PipelineService.run(deploymentId)
-  │                               ┌────────┴──────────┐
-  │                          Railpack CLI          DockerService
-  │                         (child_process)        .runContainer()
-  │                               │                     │
-  │                          Build record          PortsService
-  │                         in DB (Build)          .acquirePort()
-  │                               │                     │
-  │                               └────────┬────────────┘
-  │                                        │
-  │                                  HealthService
-  │                                  .waitForHealthy()
-  │                                  (polls http GET, 10 retries × 2s)
-  │                                        │
-  │                                  CaddyService
-  │                                  .addRoute()
-  │                                  (Caddy Admin API :2019)
-  │                                        │
-  │                              status = "running"
-  │
-  └── LogsService (RxJS Subject per deployment)
-        ├── persists every line to Log table (with phase)
-        └── fans out to active SSE subscribers
+    subgraph api["NestJS API  :7401"]
+        DC["DeploymentsController"]
+        DP["DeploymentProcessor\n(BullMQ Worker)"]
+        PS["PipelineService"]
+        LS["LogsService\n(RxJS Subject / SSE)"]
+        MS["MetricsService\n(Docker stats stream)"]
+        EVS["EventsService"]
+    end
+
+    subgraph infra["Infrastructure"]
+        Queue[("Redis\nBullMQ queue")]
+        DB[("PostgreSQL\nPrisma")]
+        Caddy["Caddy :7402\nAdmin API :2019"]
+        BuildKit["BuildKit\ntcp://buildkit:1234"]
+        Docker["Docker daemon\n/var/run/docker.sock"]
+    end
+
+    Browser -->|"POST /deployments"| DC
+    Browser -->|"GET /deployments (poll)"| DC
+    Browser -->|"GET /deployments/:id/logs (SSE)"| LS
+    Browser -->|"GET /deployments/:id/metrics (SSE)"| MS
+
+    DC -->|"enqueue job"| Queue
+    Queue --> DP
+    DP --> PS
+
+    PS -->|"git clone + railpack build"| BuildKit
+    PS -->|"docker run"| Docker
+    PS -->|"health poll"| Docker
+    PS -->|"addRoute / removeRoute"| Caddy
+    PS --> LS
+    PS --> EVS
+    PS -->|"persist status"| DB
+
+    MS -->|"container.stats stream"| Docker
+    DC -->|"read"| DB
+
+    Browser -->|"*.localhost:7402"| Caddy
+    Caddy -->|"reverse_proxy"| Docker
+```
+
+## Deployment flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as NestJS API
+    participant Queue as Redis / BullMQ
+    participant Rail as Railpack + BuildKit
+    participant Dock as Docker daemon
+    participant Health as HealthService
+    participant Caddy as Caddy Admin API
+
+    User->>API: POST /deployments { source, name }
+    API->>Queue: enqueue deployment job
+    API-->>User: 201 { id, status: "pending" }
+
+    Queue->>API: process job
+    API->>Rail: railpack build <dir> --name <tag>
+    Rail-->>API: image built (durationMs, cacheHit)
+
+    API->>Dock: docker run <image> --env … -p <port>
+    Dock-->>API: containerId
+
+    loop every 2s · up to 10 retries
+        API->>Health: GET http://host.docker.internal:<port>/
+        Health-->>API: 2xx / 5xx
+    end
+
+    API->>Caddy: PATCH /config/…/routes → prepend host route
+    Caddy-->>API: 200
+
+    API-->>User: status = "running", url = http://<slug>.localhost:7402
 ```
 
 ## Status lifecycle
 
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> building : job picked up
+    building --> deploying : image built
+    deploying --> health_check : container started
+    health_check --> routing : container healthy
+    routing --> running : Caddy route registered
+
+    building --> failed : build error
+    deploying --> failed : container start error
+    health_check --> failed : all retries exhausted
+    routing --> failed : Caddy API error
+
+    running --> stopped : DELETE /deployments/:id
+    stopped --> [*]
+    failed --> [*]
 ```
-pending → building → deploying → health_check → routing → running
-                                                              ↓
-                                                           stopped (DELETE)
-Any step that throws → failed
+
+## Rollback flow
+
+```mermaid
+sequenceDiagram
+    participant API as PipelineService
+    participant Dock as Docker daemon
+    participant Health as HealthService
+    participant Caddy as Caddy Admin API
+
+    API->>Dock: run old imageTag on _rb port key
+    loop health check
+        API->>Health: poll _rb container
+    end
+    alt healthy
+        API->>Caddy: add temp route  (<slug>-rb)
+        API->>Dock: stop old container
+        API->>Caddy: remove old route
+        API->>Caddy: transfer port, add final route (<slug>)
+        API->>Caddy: remove temp route
+        Note over API: status = "running"
+    else unhealthy
+        API->>Dock: stop _rb container
+        Note over API: original container left running
+    end
 ```
 
 ## Why BullMQ over raw async
@@ -80,27 +158,95 @@ Without limits a single misbehaving app can OOM the host or starve other contain
 `RestartPolicy: no` means the pipeline — not Docker — controls the container lifecycle,
 so a crash doesn't silently spin up a new container that bypasses health checks.
 
-## Rollback
-
-Rollback runs the existing image tag through the full `deploying → health_check → routing`
-sequence on a temporary port key (`${deploymentId}_rb`), atomically swaps the Caddy route
-once healthy, then gracefully stops the old container. If health checks fail the rollback
-container is torn down and the original is left running.
-
 ## Running locally
 
 ```bash
 cp .env.example .env
-docker-compose up --build
-# API:  http://localhost:3001
-# Web:  http://localhost:5173
-# Caddy admin: http://localhost:2019
+docker compose up --build
+# Dashboard:    http://localhost:7400
+# API:          http://localhost:7401
+# Deployed apps http://<slug>.localhost:7402
+# Caddy admin:  http://localhost:2019  (internal — exec into caddy container)
 ```
 
 To apply DB migrations inside the running stack:
+
 ```bash
-docker-compose exec api npx prisma migrate dev
+docker compose exec api npx prisma migrate deploy
 ```
+
+## Build Cache
+
+Railpack uses BuildKit-compatible local caching. Each deployment's cache is keyed by its
+deployment ID and stored in the `railpack_cache` Docker volume mounted at `/cache` inside
+the API container.
+
+| Build type | Typical duration |
+|---|---|
+| Cold (first build) | 1–3 min (downloads layers, installs deps) |
+| Warm (cached) | 10–40 s (skips already-built stages) |
+
+`cacheHit` is determined by whether `/cache/<deploymentId>` exists **before** the build starts.
+Build duration is stored on the `Build` model as `durationMs` and shown in the UI.
+
+## Container Metrics
+
+After a deployment reaches `running` status, MetricsService opens a persistent Docker stats
+stream (`container.stats({ stream: true })`) and fans metrics out to any connected SSE clients.
+
+**CPU formula (exact Docker formula):**
+
+```
+cpuDelta    = cpu_stats.cpu_usage.total_usage - precpu_stats.cpu_usage.total_usage
+systemDelta = cpu_stats.system_cpu_usage      - precpu_stats.system_cpu_usage
+cpuPercent  = (cpuDelta / systemDelta) * numCpus * 100
+```
+
+Docker reports **cumulative** nanosecond counters; the delta between two consecutive stat frames
+gives the per-interval usage. One `Subject<ContainerMetrics>` per deployment is shared across
+all SSE subscribers.
+
+## Subdomain Routing
+
+Each deployment gets a URL of the form `http://<name>-<shortId>.localhost:7402`.
+
+**How `*.localhost` resolves:**
+- Chrome and Firefox resolve `*.localhost` to `127.0.0.1` natively (RFC 6761).
+- Safari does not — add manually: `echo "127.0.0.1 <slug>.localhost" | sudo tee -a /etc/hosts`
+
+**Caddy route registration:**
+- On startup, `PipelineService.onModuleInit()` re-registers all `status=running` deployments,
+  so routes survive Caddy or API restarts.
+- New routes are **prepended** before the catch-all using `PATCH /config/…/routes` so host
+  matchers win. Existing routes are updated in-place via `PUT /id/<routeId>`.
+
+## GitHub Webhooks
+
+Wire up auto-deploy on push in three steps:
+
+1. Set `GITHUB_WEBHOOK_SECRET=<random>` in your API env.
+2. In your GitHub repo: Settings → Webhooks → Add webhook.
+   - Payload URL: `http://<your-server>:7401/webhooks/github`
+   - Content type: `application/json`
+   - Secret: same value as `GITHUB_WEBHOOK_SECRET`
+   - Events: **Just the push event**
+3. Push to the default branch — the API finds any existing deployment for that repo URL and
+   triggers a redeploy. If none exists, it creates a new deployment automatically.
+
+**HMAC verification:** every incoming webhook is verified with `crypto.timingSafeEqual` against
+the `X-Hub-Signature-256` header before any processing. Invalid signatures return 401.
+
+## Production Delta
+
+| This implementation | Production equivalent |
+|---|---|
+| `dockerode` + Docker socket | Nomad job submission via Nomad HTTP API |
+| Caddy Admin API (dynamic routes) | Consul service registration + Consul-Template regenerating Caddy config |
+| BullMQ + Redis | Nomad's built-in job scheduler |
+| DB `PortAllocation` table | Nomad dynamic port allocation in job spec |
+| `/var/run/docker.sock` | Nomad client API endpoint |
+| `.env` secrets | Vault dynamic secrets injected at job runtime |
+| Single-node Caddy | Multi-region Caddy fleet behind anycast |
 
 ## What I'd do with more time
 
@@ -130,84 +276,5 @@ docker-compose exec api npx prisma migrate dev
   built them. Rollback only works if the daemon hasn't pruned the image.
 - **SSE fan-out is in-process** — horizontal scaling of the API breaks log streaming
   unless backed by Redis pub/sub (see above).
-- **Caddy Admin API `srv0`** — assumes a server named `srv0` exists in Caddy config;
-  a fresh Caddy with only the static Caddyfile may need an initial `POST /config/apps/http`.
 - **No auth** — all endpoints are public. Production needs at minimum a bearer token on
   the API and Caddy admin interface bound to a private network only.
-
----
-
-## Build Cache
-
-Railpack supports BuildKit-compatible local caching. Each deployment's cache is keyed by its URL slug (`<name>-<shortId>`) and stored in a named Docker volume (`railpack_cache`) mounted at `/cache` inside the API container.
-
-- **First build (cold):** downloads base layers, installs dependencies — typically 1–3 min depending on language.
-- **Subsequent builds (cached):** layer resolution skips already-built stages — typically 10–40s.
-- Cache flags passed: `--cache-from type=local,src=/cache/<key> --cache-to type=local,dest=/cache/<key>,mode=max`
-- `cacheHit` is determined by whether `/cache/<key>` exists **before** the build starts.
-- Build duration is stored on the `Build` model as `durationMs` and shown in the UI with colour-coded timing.
-
----
-
-## Container Metrics
-
-After a deployment reaches `running` status, MetricsService opens a persistent Docker stats stream (`container.stats({ stream: true })`) and fans metrics out to any connected SSE clients.
-
-**CPU formula (exact Docker formula):**
-```
-cpuDelta    = cpu_stats.cpu_usage.total_usage - precpu_stats.cpu_usage.total_usage
-systemDelta = cpu_stats.system_cpu_usage    - precpu_stats.system_cpu_usage
-cpuPercent  = (cpuDelta / systemDelta) * numCpus * 100
-```
-This is non-trivial because Docker reports **cumulative** nanosecond counters; the delta between two consecutive stat frames gives the per-interval usage.
-
-**SSE fan-out:** one `Subject<ContainerMetrics>` per deployment (same pattern as logs). Multiple browser tabs subscribe independently; the Docker stats stream is opened once and shared. `stopMetrics()` is called on container stop or redeploy.
-
-**Endpoint:** `GET /deployments/:id/metrics` — raw SSE (not NestJS `@Sse`), returns 404 if deployment not `running`.
-
----
-
-## Subdomain Routing
-
-Each deployment gets a URL of the form `http://<name>-<shortId>.localhost` where `shortId = deploymentId.slice(0, 8)`.
-
-**How `*.localhost` resolves:**
-- Chrome and Firefox resolve `*.localhost` to `127.0.0.1` natively without `/etc/hosts` changes (per RFC 6761).
-- Safari does not — add manually: `echo "127.0.0.1 <slug>.localhost" | sudo tee -a /etc/hosts`
-
-**How Caddy routing works:**
-- Caddy Admin API `PUT /id/{routeId}` updates existing routes in-place (redeployments).
-- For new routes: `GET /config/apps/http/servers/<key>/routes` then `POST` (append to array) to register a `host` matcher.
-- Routes are prepended (index 0) so they match before the catch-all `:80` route.
-
----
-
-## GitHub Webhooks
-
-Wire up auto-deploy on push in three steps:
-
-1. Set `GITHUB_WEBHOOK_SECRET=<random>` in your API env.
-2. In your GitHub repo: Settings → Webhooks → Add webhook.
-   - Payload URL: `http://<your-server>:3001/webhooks/github`
-   - Content type: `application/json`
-   - Secret: same value as `GITHUB_WEBHOOK_SECRET`
-   - Events: **Just the push event**
-3. Push to the default branch — the API receives the webhook, finds any existing deployment for that repo URL, and triggers a redeploy. If none exists, it creates a new deployment automatically.
-
-**HMAC verification:** every incoming webhook is verified with `crypto.timingSafeEqual` against the `X-Hub-Signature-256` header before any processing. Invalid signatures return 401.
-
----
-
-## Production Delta
-
-What would change moving this implementation to Brimble's actual production stack:
-
-| This implementation | Production equivalent |
-|---|---|
-| `dockerode` + Docker socket | Nomad job submission via Nomad HTTP API |
-| Caddy Admin API (dynamic routes) | Consul service registration + Consul-Template regenerating Caddy config |
-| BullMQ + Redis | Nomad's built-in job scheduler |
-| DB `PortAllocation` table | Nomad dynamic port allocation in job spec |
-| `/var/run/docker.sock` | Nomad client API endpoint |
-| `.env` secrets | Vault dynamic secrets injected at job runtime |
-| Single-node Caddy | Multi-region Caddy fleet behind anycast |
