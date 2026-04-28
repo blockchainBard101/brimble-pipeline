@@ -49,6 +49,16 @@ export class LogsService {
     }
   }
 
+  // Closes the live Subject and evicts it from the map without touching DB rows.
+  // Used by rollback, which wants a fresh stream for the new run's logs.
+  resetStream(deploymentId: string): void {
+    const entry = this.streams.get(deploymentId);
+    if (entry) {
+      if (!entry.closed) entry.subject.complete();
+      this.streams.delete(deploymentId);
+    }
+  }
+
   close(deploymentId: string): void {
     const entry = this.streams.get(deploymentId);
     if (entry && !entry.closed) {
@@ -57,7 +67,8 @@ export class LogsService {
     }
   }
 
-  // Replays persisted logs first, then tails the live Subject.
+  // Replay-then-tail: historical rows land before live lines so subscribers
+  // always see a complete transcript regardless of when they connect.
   getStream(deploymentId: string): Observable<LogLine> {
     return new Observable<LogLine>((subscriber) => {
       let liveSub: { unsubscribe(): void } | null = null;

@@ -1,23 +1,18 @@
 import { Controller, Get, Param, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { MetricsService } from './metrics.service';
-import { PrismaService } from '../database/prisma.service';
 
 @Controller('deployments')
 export class MetricsController {
-  constructor(
-    private readonly metricsService: MetricsService,
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly metricsService: MetricsService) {}
 
   @Get(':id/metrics')
-  async streamMetrics(
+  streamMetrics(
     @Param('id') id: string,
     @Req() req: Request,
     @Res() res: Response,
-  ): Promise<void> {
-    const deployment = await this.prisma.deployment.findUnique({ where: { id } });
-    if (!deployment || deployment.status !== 'running') {
+  ): void {
+    if (!this.metricsService.isTracking(id)) {
       res.status(404).json({ error: 'Deployment not running' });
       return;
     }

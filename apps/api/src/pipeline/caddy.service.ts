@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
 
+interface CaddyRoute {
+  '@id'?: string;
+  match: { host: string[] }[];
+  handle: { handler: string; upstreams: { dial: string }[] }[];
+}
+
 @Injectable()
 export class CaddyService {
   private readonly adminUrl = process.env.CADDY_ADMIN_URL ?? 'http://localhost:2019';
@@ -28,7 +34,7 @@ export class CaddyService {
       ],
     };
 
-    // If route already exists (e.g. redeploy), update it in-place.
+    // Caddy's /id/{id} endpoint lets us update a named route atomically without knowing its position.
     const putRes = await fetch(`${this.adminUrl}/id/${id}`, {
       method: 'PUT',
       headers: this.headers,
@@ -36,15 +42,15 @@ export class CaddyService {
     });
     if (putRes.ok) return id;
 
-    // Route is new — append to the server's routes array.
     const serverKey = await this.discoverServerKey();
     const routesPath = `${this.adminUrl}/config/apps/http/servers/${serverKey}/routes`;
 
     const routesRes = await fetch(routesPath, { headers: this.headers });
     if (routesRes.ok) {
-      // Routes array exists — PATCH replaces it; prepend our route before the catch-all.
-      const currentRoutes = (await routesRes.json().catch(() => [])) as unknown[];
-      const newRoutes = [route, ...currentRoutes.filter((r: any) => r['@id'] !== id)];
+      // Prepend so our host-matched route wins before the catch-all static response.
+      // Caddy evaluates routes top-to-bottom; PUT would replace index 0, PATCH replaces the whole array.
+      const currentRoutes = (await routesRes.json().catch(() => [])) as CaddyRoute[];
+      const newRoutes = [route, ...currentRoutes.filter((r) => r['@id'] !== id)];
       const replaceRes = await fetch(routesPath, {
         method: 'PATCH',
         headers: this.headers,
@@ -55,7 +61,7 @@ export class CaddyService {
         throw new Error(`Caddy admin error ${replaceRes.status}: ${text}`);
       }
     } else {
-      // Routes key doesn't exist yet — PUT creates it with our route as the first element.
+      // No routes array yet (fresh Caddy); PUT creates it.
       const createRes = await fetch(routesPath, {
         method: 'PUT',
         headers: this.headers,

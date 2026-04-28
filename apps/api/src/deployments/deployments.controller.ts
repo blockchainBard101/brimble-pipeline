@@ -16,10 +16,7 @@ import { LogsService } from '../logs/logs.service';
 import { EnvVarsService } from './env-vars.service';
 import { CreateDeploymentDto } from './dto/create-deployment.dto';
 import { UpdateEnvVarsDto } from './dto/env-var.dto';
-
-class RollbackDto {
-  imageTag: string;
-}
+import { RollbackDto } from './dto/rollback.dto';
 
 @Controller('deployments')
 export class DeploymentsController {

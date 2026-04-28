@@ -11,6 +11,7 @@ import { HealthService } from './health.service';
 import { PortsService } from '../ports/ports.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { EventsService } from '../events/events.service';
+import { DeploymentStatus } from '../common/deployment-status.type';
 
 function appUrl(host: string): string {
   const port = process.env.CADDY_PUBLIC_PORT;
@@ -54,7 +55,6 @@ export class PipelineService implements OnModuleInit {
     }
   }
 
-  // Status flow: pending → building → deploying → health_check → routing → running | failed
   async run(deploymentId: string): Promise<void> {
     const deployment = await this.prisma.deployment.findUniqueOrThrow({
       where: { id: deploymentId },
@@ -62,17 +62,14 @@ export class PipelineService implements OnModuleInit {
     const { source, sourceType, slug, name } = deployment;
     const host = slug ?? deploymentId;
 
-    const log = (line: string, stream: 'stdout' | 'stderr' = 'stdout', phase = 'system') =>
-      this.logsService.append(deploymentId, line, stream, phase);
-
     try {
       await this.logsService.clear(deploymentId);
       await this.setStatus(deploymentId, 'building');
       await this.events.createEvent(deploymentId, 'status_change', 'Status changed to building');
 
       const imageTag = `brimble/${deploymentId}:${Date.now()}`;
-      await log(`[pipeline] Building image ${imageTag}`, 'stdout', 'system');
-      await log(`[pipeline] Checking build cache for ${name}...`, 'stdout', 'build');
+      await this.log(deploymentId, `[pipeline] Building image ${imageTag}`, 'stdout', 'system');
+      await this.log(deploymentId, `[pipeline] Checking build cache for ${name}...`, 'stdout', 'build');
 
       const { durationMs, cacheHit } = await this.runRailpack(
         source,
@@ -81,7 +78,8 @@ export class PipelineService implements OnModuleInit {
         deploymentId,
       );
       const durationStr = fmtDuration(durationMs);
-      await log(
+      await this.log(
+        deploymentId,
         `[pipeline] Build completed in ${durationStr} (cache: ${cacheHit ? 'hit' : 'miss'})`,
         'stdout',
         'build',
@@ -97,7 +95,7 @@ export class PipelineService implements OnModuleInit {
 
       await this.setStatus(deploymentId, 'deploying', { imageTag });
       await this.events.createEvent(deploymentId, 'status_change', 'Status changed to deploying');
-      await log('[pipeline] Starting container', 'stdout', 'system');
+      await this.log(deploymentId, '[pipeline] Starting container', 'stdout', 'system');
 
       const { containerId, port } = await this.docker.runContainer(
         imageTag,
@@ -123,7 +121,7 @@ export class PipelineService implements OnModuleInit {
 
       await this.setStatus(deploymentId, 'routing');
       await this.events.createEvent(deploymentId, 'status_change', 'Status changed to routing');
-      await log('[pipeline] Registering Caddy route', 'stdout', 'routing');
+      await this.log(deploymentId, '[pipeline] Registering Caddy route', 'stdout', 'routing');
 
       const routeId = await this.caddy.addRoute(deploymentId, host, port);
       const url = appUrl(host);
@@ -136,12 +134,13 @@ export class PipelineService implements OnModuleInit {
 
       await this.setStatus(deploymentId, 'running', { url, routeId });
       await this.events.createEvent(deploymentId, 'status_change', 'Status changed to running');
-      await log(`[pipeline] Deployment live at ${url}`, 'stdout', 'system');
+      await this.log(deploymentId, `[pipeline] Deployment live at ${url}`, 'stdout', 'system');
 
       this.metrics.startMetrics(deploymentId, containerId);
     } catch (err) {
-      await log(`[pipeline] FAILED: ${(err as Error).message}`, 'stderr', 'system');
+      await this.log(deploymentId, `[pipeline] FAILED: ${(err as Error).message}`, 'stderr', 'system');
       await this.setStatus(deploymentId, 'failed').catch(() => {});
+      throw err;
     } finally {
       this.logsService.close(deploymentId);
     }
@@ -155,14 +154,10 @@ export class PipelineService implements OnModuleInit {
     const oldPortKey = deploymentId;
     const host = deployment.slug ?? deploymentId;
 
-    const log = (line: string, stream: 'stdout' | 'stderr' = 'stdout', phase = 'system') =>
-      this.logsService.append(deploymentId, line, stream, phase);
-
-    this.logsService.close(deploymentId);
-    this.logsService['streams'].delete(deploymentId);
+    this.logsService.resetStream(deploymentId);
 
     try {
-      await log(`[rollback] Rolling back to ${imageTag}`, 'stdout', 'system');
+      await this.log(deploymentId, `[rollback] Rolling back to ${imageTag}`, 'stdout', 'system');
       await this.setStatus(deploymentId, 'deploying', { imageTag });
       await this.events.createEvent(deploymentId, 'rollback', `Rolling back to ${imageTag}`, {
         imageTag,
@@ -197,7 +192,7 @@ export class PipelineService implements OnModuleInit {
 
       await this.setStatus(deploymentId, 'routing');
       const routeId = await this.caddy.addRoute(`${deploymentId}-rb`, `${host}-rb`, newPort);
-      await log('[rollback] New route healthy — swapping', 'stdout', 'routing');
+      await this.log(deploymentId, '[rollback] New route healthy — swapping', 'stdout', 'routing');
 
       this.metrics.stopMetrics(deploymentId);
       if (oldContainerId) {
@@ -224,11 +219,11 @@ export class PipelineService implements OnModuleInit {
         { url },
       );
       await this.events.createEvent(deploymentId, 'status_change', 'Status changed to running');
-      await log(`[rollback] Live at ${url}`, 'stdout', 'system');
+      await this.log(deploymentId, `[rollback] Live at ${url}`, 'stdout', 'system');
 
       this.metrics.startMetrics(deploymentId, newContainerId);
     } catch (err) {
-      await log(`[rollback] FAILED: ${(err as Error).message}`, 'stderr', 'system');
+      await this.log(deploymentId, `[rollback] FAILED: ${(err as Error).message}`, 'stderr', 'system');
       await this.setStatus(deploymentId, 'failed').catch(() => {});
     } finally {
       this.logsService.close(deploymentId);
@@ -245,9 +240,18 @@ export class PipelineService implements OnModuleInit {
     await this.caddy.removeRoute(deploymentId);
   }
 
+  private log(
+    deploymentId: string,
+    line: string,
+    stream: 'stdout' | 'stderr' = 'stdout',
+    phase = 'system',
+  ) {
+    return this.logsService.append(deploymentId, line, stream, phase);
+  }
+
   private setStatus(
     id: string,
-    status: string,
+    status: DeploymentStatus,
     extra?: Partial<{
       imageTag: string;
       containerId: string;
@@ -265,15 +269,12 @@ export class PipelineService implements OnModuleInit {
     imageTag: string,
     deploymentId: string,
   ): Promise<{ durationMs: number; cacheHit: boolean }> {
-    const log = (line: string, stream: 'stdout' | 'stderr' = 'stdout') =>
-      this.logsService.append(deploymentId, line, stream, 'build');
-
     let buildDir = source;
     let tmpDir: string | null = null;
 
     if (sourceType === 'git') {
       tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'brimble-'));
-      await log(`[build] Cloning ${source}`);
+      await this.log(deploymentId, `[build] Cloning ${source}`, 'stdout', 'build');
       await this.spawnLogged('git', ['clone', '--depth=1', source, tmpDir], deploymentId, 'build');
       buildDir = tmpDir;
     }
@@ -284,8 +285,6 @@ export class PipelineService implements OnModuleInit {
 
     const start = Date.now();
     try {
-      // Railpack detects the app type, generates a build plan, and builds via Docker BuildKit
-      // using the mounted Docker socket — no separate BuildKit daemon required.
       await this.spawnLogged(
         'railpack',
         ['build', buildDir, '--name', imageTag, '--cache-key', deploymentId],

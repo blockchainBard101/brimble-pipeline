@@ -12,9 +12,10 @@ export class EventsService {
     message: string,
     metadata?: Record<string, unknown>,
   ): Promise<void> {
+    // Swallow errors so a DB hiccup never blocks the pipeline.
     await this.prisma.deploymentEvent
-      .create({ data: { deploymentId, type, message, metadata: (metadata ?? undefined) as Prisma.InputJsonValue | undefined } })
-      .catch(() => undefined); // never block the pipeline
+      .create({ data: { deploymentId, type, message, metadata: metadata as Prisma.InputJsonValue | undefined } })
+      .catch(() => undefined);
   }
 
   getEvents(deploymentId: string) {

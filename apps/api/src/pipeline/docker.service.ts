@@ -3,10 +3,7 @@ import * as Dockerode from 'dockerode';
 import { PortsService } from '../ports/ports.service';
 import { LogsService } from '../logs/logs.service';
 import { EnvVarsService } from '../deployments/env-vars.service';
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+import { sleep } from '../common/sleep';
 
 @Injectable()
 export class DockerService {

@@ -1,6 +1,8 @@
+import { EnvVarInputDto } from './env-var.dto';
+
 export class CreateDeploymentDto {
   name: string;
   source: string;
   sourceType: 'git' | 'upload';
-  envVars?: { key: string; value: string }[];
+  envVars?: EnvVarInputDto[];
 }

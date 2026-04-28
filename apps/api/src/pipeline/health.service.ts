@@ -1,10 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import * as http from 'http';
 import { LogsService } from '../logs/logs.service';
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+import { sleep } from '../common/sleep';
 
 export interface HealthResult {
   healthy: boolean;

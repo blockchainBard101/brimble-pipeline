@@ -329,7 +329,7 @@ What I'd change:
 
 - The plan gate needs better messaging. "Upgrade to deploy web services" means
   nothing to a developer. Say specifically: "Next.js SSR requires a paid plan
-  because it needs a Node.js runtime — static React apps deploy free."
+  because it needs a Node.js runtime static React apps deploy free."
 
 - Failed builds should show exactly why they failed, not just a generic error.
   I had to guess whether it was a framework issue, a config issue, or a plan

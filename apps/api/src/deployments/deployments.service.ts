@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { PipelineService } from '../pipeline/pipeline.service';
 import { QueueService } from '../queue/queue.service';
@@ -8,6 +8,8 @@ import { CreateDeploymentDto } from './dto/create-deployment.dto';
 
 @Injectable()
 export class DeploymentsService {
+  private readonly logger = new Logger(DeploymentsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
@@ -17,7 +19,7 @@ export class DeploymentsService {
   ) {}
 
   async create(dto: CreateDeploymentDto) {
-    // Create first to get the generated ID, then derive slug from it.
+    // Two-step create: we need the generated ID before we can derive the slug.
     const deployment = await this.prisma.deployment.create({
       data: {
         name: dto.name,
@@ -76,7 +78,7 @@ export class DeploymentsService {
   }
 
   async remove(id: string) {
-    const deployment = await this.findOne(id);
+    const deployment = await this.findDeployment(id);
     await this.pipeline.stop(deployment.id, deployment.containerId);
     await this.prisma.deployment.delete({ where: { id } });
   }
@@ -89,13 +91,13 @@ export class DeploymentsService {
       throw new BadRequestException(`No build with tag ${imageTag} exists for deployment ${id}`);
     }
     this.pipeline.rollback(id, imageTag).catch((err) =>
-      console.error(`Rollback error for ${id}:`, err),
+      this.logger.error(`Rollback failed for ${id}: ${(err as Error).message}`),
     );
     return { queued: true, imageTag };
   }
 
   async redeploy(id: string) {
-    const deployment = await this.findOne(id);
+    const deployment = await this.findDeployment(id);
     await this.pipeline.stop(deployment.id, deployment.containerId);
     await this.prisma.deployment.update({
       where: { id },
@@ -114,6 +116,15 @@ export class DeploymentsService {
 
   getEvents(id: string) {
     return this.events.getEvents(id);
+  }
+
+  private async findDeployment(id: string) {
+    const deployment = await this.prisma.deployment.findUnique({
+      where: { id },
+      select: { id: true, containerId: true },
+    });
+    if (!deployment) throw new NotFoundException(`Deployment ${id} not found`);
+    return deployment;
   }
 
   private slugify(name: string): string {

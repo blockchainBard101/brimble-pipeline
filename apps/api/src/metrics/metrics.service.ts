@@ -27,6 +27,10 @@ interface DockerStats {
   memory_stats: { usage: number; limit: number };
 }
 
+interface DestroyableStream extends NodeJS.ReadableStream {
+  destroy?(): void;
+}
+
 @Injectable()
 export class MetricsService {
   private readonly docker = new Dockerode({
@@ -34,7 +38,7 @@ export class MetricsService {
   });
 
   private readonly subjects = new Map<string, Subject<ContainerMetrics>>();
-  private readonly rawStreams = new Map<string, NodeJS.ReadableStream>();
+  private readonly rawStreams = new Map<string, DestroyableStream>();
 
   startMetrics(deploymentId: string, containerId: string): void {
     this.stopMetrics(deploymentId);
@@ -87,10 +91,14 @@ export class MetricsService {
     });
   }
 
+  isTracking(deploymentId: string): boolean {
+    return this.subjects.has(deploymentId);
+  }
+
   stopMetrics(deploymentId: string): void {
     const stream = this.rawStreams.get(deploymentId);
     if (stream) {
-      (stream as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
+      stream.destroy?.();
       this.rawStreams.delete(deploymentId);
     }
     const subject = this.subjects.get(deploymentId);

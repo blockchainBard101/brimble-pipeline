@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
-import { EnvVarResponseDto } from './dto/env-var.dto';
+import { EnvVarInputDto, EnvVarResponseDto } from './dto/env-var.dto';
 
 @Injectable()
 export class EnvVarsService {
@@ -10,15 +10,14 @@ export class EnvVarsService {
     private readonly crypto: CryptoService,
   ) {}
 
-  async setEnvVars(
-    deploymentId: string,
-    vars: { key: string; value: string }[],
-  ): Promise<void> {
+  async setEnvVars(deploymentId: string, vars: EnvVarInputDto[]): Promise<void> {
     await this.prisma.envVar.deleteMany({ where: { deploymentId } });
-    for (const { key, value } of vars) {
+    if (!vars.length) return;
+    const data = vars.map(({ key, value }) => {
       const { encryptedValue, iv } = this.crypto.encrypt(value);
-      await this.prisma.envVar.create({ data: { deploymentId, key, encryptedValue, iv } });
-    }
+      return { deploymentId, key, encryptedValue, iv };
+    });
+    await this.prisma.envVar.createMany({ data });
   }
 
   async getMasked(deploymentId: string): Promise<EnvVarResponseDto[]> {
